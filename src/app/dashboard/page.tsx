@@ -2,103 +2,189 @@
 import { useMemo, useState, useEffect } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import Link from 'next/link'
+import { Home, Bot, Settings, Plus, Activity, Users, MessageSquare, TrendingUp, Clock, AlertCircle } from 'lucide-react'
 
-interface DashboardStats {
-  totalChatbots: number
-  activeChatbots: number
-  totalConversations: number
-  monthlyConversations: number
-  averageConfidence: number
-  activeDeployments: number
-}
-
-interface Chatbot {
+interface User {
   id: string
-  name: string
-  description: string
-  status: string
-  is_active: boolean
+  email: string
+  full_name: string
+  avatar_url: string | null
+  subscription_tier: string
   created_at: string
   updated_at: string
 }
 
-export default function DashboardPage() {
-  const supabase = useMemo(() => 
-    createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    ), []
-  )
+interface Bot {
+  id: string
+  user_id: string
+  name: string
+  description: string
+  avatar_url: string | null
+  personality: string
+  status: string
+  fallback_message: string
+  handoff_enabled: boolean
+  created_at: string
+  updated_at: string
+}
 
-  const [stats, setStats] = useState<DashboardStats>({
-    totalChatbots: 0,
-    activeChatbots: 0,
-    totalConversations: 0,
-    monthlyConversations: 0,
-    averageConfidence: 0,
-    activeDeployments: 0
-  })
-  const [chatbots, setChatbots] = useState<Chatbot[]>([])
+interface Stats {
+  totalBots: number
+  totalConversations: number
+  totalMessages: number
+  activeConversations: number
+}
+
+const Spinner = () => (
+  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+)
+
+const LoadingCard = () => (
+  <div className="bg-white p-6 rounded-lg shadow-sm border animate-pulse">
+    <div className="h-4 bg-gray-200 rounded w-1/4 mb-2"></div>
+    <div className="h-8 bg-gray-200 rounded w-1/3"></div>
+  </div>
+)
+
+export default function Dashboard() {
+  const supabase = useMemo(() => createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!), [])
+  
+  const [user, setUser] = useState<User | null>(null)
+  const [bots, setBots] = useState<Bot[]>([])
+  const [stats, setStats] = useState<Stats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [sidebarOpen, setSidebarOpen] = useState(false)
 
-  useEffect(() => {
-    fetchDashboardData()
-  }, [])
-
-  const fetchDashboardData = async () => {
+  const fetchUserData = async () => {
     try {
-      setLoading(true)
-      setError(null)
+      const { data: { user: authUser } } = await supabase.auth.getUser()
+      
+      if (!authUser) {
+        throw new Error('Not authenticated')
+      }
 
-      // Fetch chatbots
-      const { data: chatbotsData, error: chatbotsError } = await supabase
-        .from('chatbots')
+      const { data: userData, error: userError } = await supabase
+        .from('users')
         .select('*')
-        .order('created_at', { ascending: false })
-        .limit(5)
+        .eq('id', authUser.id)
+        .single()
 
-      if (chatbotsError) throw chatbotsError
-
-      // Fetch stats
-      const [
-        { count: totalChatbots },
-        { count: activeChatbots },
-        { count: totalConversations },
-        { count: monthlyConversations },
-        { count: activeDeployments },
-        { data: confidenceData }
-      ] = await Promise.all([
-        supabase.from('chatbots').select('*', { count: 'exact', head: true }),
-        supabase.from('chatbots').select('*', { count: 'exact', head: true }).eq('is_active', true),
-        supabase.from('conversations').select('*', { count: 'exact', head: true }),
-        supabase.from('conversations').select('*', { count: 'exact', head: true })
-          .gte('started_at', new Date(new Date().setMonth(new Date().getMonth() - 1)).toISOString()),
-        supabase.from('deployments').select('*', { count: 'exact', head: true }).eq('is_active', true),
-        supabase.from('messages').select('confidence_score').not('confidence_score', 'is', null)
-      ])
-
-      const averageConfidence = confidenceData && confidenceData.length > 0
-        ? confidenceData.reduce((sum, msg) => sum + (msg.confidence_score || 0), 0) / confidenceData.length
-        : 0
-
-      setStats({
-        totalChatbots: totalChatbots || 0,
-        activeChatbots: activeChatbots || 0,
-        totalConversations: totalConversations || 0,
-        monthlyConversations: monthlyConversations || 0,
-        averageConfidence: Math.round(averageConfidence * 100),
-        activeDeployments: activeDeployments || 0
-      })
-
-      setChatbots(chatbotsData || [])
+      if (userError) throw userError
+      setUser(userData)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load dashboard data')
-    } finally {
-      setLoading(false)
+      console.error('Error fetching user:', err)
+      setError('Failed to load user data')
     }
   }
+
+  const fetchBots = async () => {
+    try {
+      const { data: { user: authUser } } = await supabase.auth.getUser()
+      
+      if (!authUser) {
+        throw new Error('Not authenticated')
+      }
+
+      const { data, error } = await supabase
+        .from('bots')
+        .select('*')
+        .eq('user_id', authUser.id)
+        .order('created_at', { ascending: false })
+
+      if (error) throw error
+      setBots(data || [])
+    } catch (err) {
+      console.error('Error fetching bots:', err)
+      setError('Failed to load bots')
+    }
+  }
+
+  const fetchStats = async () => {
+    try {
+      const { data: { user: authUser } } = await supabase.auth.getUser()
+      
+      if (!authUser) {
+        throw new Error('Not authenticated')
+      }
+
+      // Get total bots count
+      const { count: botsCount } = await supabase
+        .from('bots')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', authUser.id)
+
+      // Get user's bot IDs for filtering
+      const { data: userBots } = await supabase
+        .from('bots')
+        .select('id')
+        .eq('user_id', authUser.id)
+
+      const botIds = userBots?.map(bot => bot.id) || []
+
+      if (botIds.length === 0) {
+        setStats({
+          totalBots: 0,
+          totalConversations: 0,
+          totalMessages: 0,
+          activeConversations: 0
+        })
+        return
+      }
+
+      // Get conversations count
+      const { count: conversationsCount } = await supabase
+        .from('conversations')
+        .select('*', { count: 'exact', head: true })
+        .in('bot_id', botIds)
+
+      // Get messages count
+      const { data: conversations } = await supabase
+        .from('conversations')
+        .select('id')
+        .in('bot_id', botIds)
+
+      const conversationIds = conversations?.map(conv => conv.id) || []
+      
+      let messagesCount = 0
+      if (conversationIds.length > 0) {
+        const { count } = await supabase
+          .from('messages')
+          .select('*', { count: 'exact', head: true })
+          .in('conversation_id', conversationIds)
+        messagesCount = count || 0
+      }
+
+      // Get active conversations count
+      const { count: activeConversationsCount } = await supabase
+        .from('conversations')
+        .select('*', { count: 'exact', head: true })
+        .in('bot_id', botIds)
+        .eq('status', 'active')
+
+      setStats({
+        totalBots: botsCount || 0,
+        totalConversations: conversationsCount || 0,
+        totalMessages: messagesCount,
+        activeConversations: activeConversationsCount || 0
+      })
+    } catch (err) {
+      console.error('Error fetching stats:', err)
+    }
+  }
+
+  useEffect(() => {
+    const loadDashboard = async () => {
+      setLoading(true)
+      await Promise.all([
+        fetchUserData(),
+        fetchBots(),
+        fetchStats()
+      ])
+      setLoading(false)
+    }
+
+    loadDashboard()
+  }, [supabase])
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
@@ -108,10 +194,88 @@ export default function DashboardPage() {
     })
   }
 
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'active':
+        return 'bg-green-100 text-green-800'
+      case 'inactive':
+        return 'bg-gray-100 text-gray-800'
+      case 'training':
+        return 'bg-yellow-100 text-yellow-800'
+      default:
+        return 'bg-gray-100 text-gray-800'
+    }
+  }
+
   if (loading) {
     return (
+      <div className="min-h-screen bg-gray-50 flex">
+        {/* Sidebar */}
+        <div className="w-64 bg-white shadow-sm border-r">
+          <div className="p-6">
+            <h2 className="text-xl font-bold text-gray-800">BotCraft Studio</h2>
+          </div>
+          <nav className="mt-6">
+            <Link href="/dashboard" className="flex items-center px-6 py-3 text-blue-600 bg-blue-50 border-r-2 border-blue-600">
+              <Home className="mr-3 h-5 w-5" />
+              Dashboard
+            </Link>
+            <Link href="/dashboard/bots" className="flex items-center px-6 py-3 text-gray-700 hover:bg-gray-50">
+              <Bot className="mr-3 h-5 w-5" />
+              Bots
+            </Link>
+            <Link href="/dashboard/settings" className="flex items-center px-6 py-3 text-gray-700 hover:bg-gray-50">
+              <Settings className="mr-3 h-5 w-5" />
+              Settings
+            </Link>
+          </nav>
+        </div>
+
+        {/* Main Content */}
+        <div className="flex-1 p-8">
+          <div className="animate-pulse">
+            <div className="h-8 bg-gray-200 rounded w-1/4 mb-2"></div>
+            <div className="h-6 bg-gray-200 rounded w-1/3 mb-8"></div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+              {[1, 2, 3, 4].map((i) => (
+                <LoadingCard key={i} />
+              ))}
+            </div>
+            
+            <div className="bg-white rounded-lg shadow-sm border">
+              <div className="p-6 border-b">
+                <div className="h-6 bg-gray-200 rounded w-1/4"></div>
+              </div>
+              <div className="p-6 space-y-4">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="flex items-center justify-between py-3">
+                    <div className="h-4 bg-gray-200 rounded w-1/3"></div>
+                    <div className="h-4 bg-gray-200 rounded w-1/4"></div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
+        <div className="bg-white p-8 rounded-lg shadow-sm border max-w-md w-full text-center">
+          <AlertCircle className="mx-auto h-12 w-12 text-red-500 mb-4" />
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">Something went wrong</h2>
+          <p className="text-gray-600 mb-4">{error}</p>
+          <button 
+            onClick={() => window.location.reload()}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            Try Again
+          </button>
+        </div>
       </div>
     )
   }
@@ -119,255 +283,182 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-gray-50 flex">
       {/* Sidebar */}
-      <div className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} fixed inset-y-0 left-0 z-50 w-64 bg-white shadow-lg transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0`}>
-        <div className="flex items-center justify-center h-16 px-4 border-b border-gray-200">
-          <h1 className="text-xl font-bold text-blue-600">BotCraft Studio</h1>
+      <div className="w-64 bg-white shadow-sm border-r">
+        <div className="p-6">
+          <h2 className="text-xl font-bold text-gray-800">BotCraft Studio</h2>
         </div>
-        <nav className="mt-5 px-2">
-          <div className="space-y-1">
-            <Link href="/dashboard" className="bg-blue-50 text-blue-700 group flex items-center px-2 py-2 text-sm font-medium rounded-md">
-              <svg className="text-blue-500 mr-3 flex-shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-              </svg>
-              Home
-            </Link>
-            <Link href="/dashboard/chatbots" className="text-gray-700 hover:text-gray-900 hover:bg-gray-50 group flex items-center px-2 py-2 text-sm font-medium rounded-md">
-              <svg className="text-gray-400 mr-3 flex-shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-              </svg>
-              Chatbots
-            </Link>
-            <Link href="/dashboard/settings" className="text-gray-700 hover:text-gray-900 hover:bg-gray-50 group flex items-center px-2 py-2 text-sm font-medium rounded-md">
-              <svg className="text-gray-400 mr-3 flex-shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-              Settings
-            </Link>
-          </div>
+        <nav className="mt-6">
+          <Link href="/dashboard" className="flex items-center px-6 py-3 text-blue-600 bg-blue-50 border-r-2 border-blue-600">
+            <Home className="mr-3 h-5 w-5" />
+            Dashboard
+          </Link>
+          <Link href="/dashboard/bots" className="flex items-center px-6 py-3 text-gray-700 hover:bg-gray-50 transition-colors">
+            <Bot className="mr-3 h-5 w-5" />
+            Bots
+          </Link>
+          <Link href="/dashboard/settings" className="flex items-center px-6 py-3 text-gray-700 hover:bg-gray-50 transition-colors">
+            <Settings className="mr-3 h-5 w-5" />
+            Settings
+          </Link>
         </nav>
+        
+        {/* User Info */}
+        <div className="absolute bottom-0 left-0 right-0 w-64 p-6 border-t">
+          <div className="flex items-center">
+            <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
+              {user?.full_name?.charAt(0) || user?.email?.charAt(0) || 'U'}
+            </div>
+            <div className="ml-3 flex-1 min-w-0">
+              <p className="text-sm font-medium text-gray-900 truncate">
+                {user?.full_name || user?.email}
+              </p>
+              <p className="text-xs text-gray-500 capitalize">
+                {user?.subscription_tier || 'free'} plan
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Main content */}
-      <div className="flex-1 flex flex-col overflow-hidden lg:ml-0">
-        {/* Top bar */}
-        <div className="bg-white shadow-sm border-b border-gray-200 px-4 py-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between">
-            <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="lg:hidden -ml-0.5 -mt-0.5 h-12 w-12 inline-flex items-center justify-center rounded-md text-gray-500 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
-            >
-              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
-            </button>
-            <div>
-              <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
-              <p className="text-sm text-gray-600">Welcome to BotCraft Studio</p>
+      {/* Main Content */}
+      <div className="flex-1 p-8">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900">
+            Welcome back, {user?.full_name?.split(' ')[0] || 'there'}!
+          </h1>
+          <p className="text-gray-600 mt-2">
+            Here's an overview of your chatbot performance and recent activity.
+          </p>
+        </div>
+
+        {/* Stats Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          <div className="bg-white p-6 rounded-lg shadow-sm border">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-medium text-gray-600">Total Bots</p>
+              <Bot className="h-5 w-5 text-blue-600" />
             </div>
-            <div className="flex items-center space-x-4">
-              <Link href="/dashboard/chatbots" className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
-                Create Chatbot
-              </Link>
+            <p className="text-3xl font-bold text-gray-900">{stats?.totalBots || 0}</p>
+          </div>
+
+          <div className="bg-white p-6 rounded-lg shadow-sm border">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-medium text-gray-600">Conversations</p>
+              <MessageSquare className="h-5 w-5 text-green-600" />
             </div>
+            <p className="text-3xl font-bold text-gray-900">{stats?.totalConversations || 0}</p>
+          </div>
+
+          <div className="bg-white p-6 rounded-lg shadow-sm border">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-medium text-gray-600">Messages</p>
+              <TrendingUp className="h-5 w-5 text-purple-600" />
+            </div>
+            <p className="text-3xl font-bold text-gray-900">{stats?.totalMessages || 0}</p>
+          </div>
+
+          <div className="bg-white p-6 rounded-lg shadow-sm border">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-medium text-gray-600">Active Now</p>
+              <Activity className="h-5 w-5 text-orange-600" />
+            </div>
+            <p className="text-3xl font-bold text-gray-900">{stats?.activeConversations || 0}</p>
           </div>
         </div>
 
-        {/* Dashboard content */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
-          {error && (
-            <div className="mb-6 bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-md">
-              {error}
+        {/* Bots Table */}
+        <div className="bg-white rounded-lg shadow-sm border">
+          <div className="p-6 border-b flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-gray-900">Your Bots</h2>
+            <Link 
+              href="/dashboard/bots/new"
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center"
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              New Bot
+            </Link>
+          </div>
+          
+          {bots.length === 0 ? (
+            <div className="p-12 text-center">
+              <Bot className="mx-auto h-12 w-12 text-gray-400 mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 mb-2">No bots yet</h3>
+              <p className="text-gray-600 mb-6">
+                Create your first chatbot to get started with BotCraft Studio.
+              </p>
+              <Link 
+                href="/dashboard/bots/new"
+                className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors inline-flex items-center"
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Create Your First Bot
+              </Link>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-gray-200">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Bot
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Status
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Created
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {bots.map((bot) => (
+                    <tr key={bot.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-sm font-medium mr-3">
+                            {bot.name.charAt(0)}
+                          </div>
+                          <div>
+                            <div className="text-sm font-medium text-gray-900">{bot.name}</div>
+                            <div className="text-sm text-gray-500 truncate max-w-xs">
+                              {bot.description}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(bot.status)}`}>
+                          {bot.status}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {formatDate(bot.created_at)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                        <Link 
+                          href={`/dashboard/bots/${bot.id}`}
+                          className="text-blue-600 hover:text-blue-900 mr-4"
+                        >
+                          View
+                        </Link>
+                        <Link 
+                          href={`/dashboard/bots/${bot.id}/analytics`}
+                          className="text-gray-600 hover:text-gray-900"
+                        >
+                          Analytics
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
-
-          {/* Stats cards */}
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 mb-8">
-            <div className="bg-white overflow-hidden shadow rounded-lg">
-              <div className="p-5">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <svg className="h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                    </svg>
-                  </div>
-                  <div className="ml-5 w-0 flex-1">
-                    <dl>
-                      <dt className="text-sm font-medium text-gray-500 truncate">Total Chatbots</dt>
-                      <dd className="text-lg font-medium text-gray-900">{stats.totalChatbots}</dd>
-                    </dl>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white overflow-hidden shadow rounded-lg">
-              <div className="p-5">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <svg className="h-6 w-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                  </div>
-                  <div className="ml-5 w-0 flex-1">
-                    <dl>
-                      <dt className="text-sm font-medium text-gray-500 truncate">Active Chatbots</dt>
-                      <dd className="text-lg font-medium text-gray-900">{stats.activeChatbots}</dd>
-                    </dl>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white overflow-hidden shadow rounded-lg">
-              <div className="p-5">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <svg className="h-6 w-6 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z" />
-                    </svg>
-                  </div>
-                  <div className="ml-5 w-0 flex-1">
-                    <dl>
-                      <dt className="text-sm font-medium text-gray-500 truncate">Total Conversations</dt>
-                      <dd className="text-lg font-medium text-gray-900">{stats.totalConversations}</dd>
-                    </dl>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white overflow-hidden shadow rounded-lg">
-              <div className="p-5">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <svg className="h-6 w-6 text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                    </svg>
-                  </div>
-                  <div className="ml-5 w-0 flex-1">
-                    <dl>
-                      <dt className="text-sm font-medium text-gray-500 truncate">Monthly Conversations</dt>
-                      <dd className="text-lg font-medium text-gray-900">{stats.monthlyConversations}</dd>
-                    </dl>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white overflow-hidden shadow rounded-lg">
-              <div className="p-5">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <svg className="h-6 w-6 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                  </div>
-                  <div className="ml-5 w-0 flex-1">
-                    <dl>
-                      <dt className="text-sm font-medium text-gray-500 truncate">Avg. Confidence</dt>
-                      <dd className="text-lg font-medium text-gray-900">{stats.averageConfidence}%</dd>
-                    </dl>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white overflow-hidden shadow rounded-lg">
-              <div className="p-5">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <svg className="h-6 w-6 text-pink-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                    </svg>
-                  </div>
-                  <div className="ml-5 w-0 flex-1">
-                    <dl>
-                      <dt className="text-sm font-medium text-gray-500 truncate">Active Deployments</dt>
-                      <dd className="text-lg font-medium text-gray-900">{stats.activeDeployments}</dd>
-                    </dl>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Recent Chatbots */}
-          <div className="bg-white shadow rounded-lg">
-            <div className="px-4 py-5 sm:p-6">
-              <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">Recent Chatbots</h3>
-              {chatbots.length === 0 ? (
-                <div className="text-center py-12">
-                  <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                  </svg>
-                  <h3 className="mt-2 text-sm font-medium text-gray-900">No chatbots</h3>
-                  <p className="mt-1 text-sm text-gray-500">Get started by creating your first chatbot.</p>
-                  <div className="mt-6">
-                    <Link href="/dashboard/chatbots" className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700">
-                      <svg className="-ml-1 mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                      </svg>
-                      New Chatbot
-                    </Link>
-                  </div>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Active</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                      {chatbots.map((chatbot) => (
-                        <tr key={chatbot.id}>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <div>
-                              <div className="text-sm font-medium text-gray-900">{chatbot.name}</div>
-                              <div className="text-sm text-gray-500">{chatbot.description}</div>
-                            </div>
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                              chatbot.status === 'trained' 
-                                ? 'bg-green-100 text-green-800' 
-                                : chatbot.status === 'training'
-                                ? 'bg-yellow-100 text-yellow-800'
-                                : 'bg-gray-100 text-gray-800'
-                            }`}>
-                              {chatbot.status}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                              chatbot.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                            }`}>
-                              {chatbot.is_active ? 'Active' : 'Inactive'}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                            {formatDate(chatbot.created_at)}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                            <Link href={`/dashboard/chatbots/${chatbot.id}`} className="text-blue-600 hover:text-blue-900">
-                              View
-                            </Link>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </div>
-        </main>
+        </div>
       </div>
     </div>
   )
