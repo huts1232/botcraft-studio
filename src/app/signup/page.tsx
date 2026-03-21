@@ -1,200 +1,184 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { createClient } from '@supabase/supabase-js'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Eye, EyeOff, Loader2, Bot } from 'lucide-react'
+import Link from 'next/link'
+import { createClient } from '@supabase/supabase-js'
 
 export default function SignupPage() {
-  const router = useRouter()
-  const supabase = useMemo(() => createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!), [])
-  
-  const [formData, setFormData] = useState({
-    fullName: '',
-    email: '',
-    password: ''
-  })
-  const [showPassword, setShowPassword] = useState(false)
-  const [isLoading, setIsLoading] = useState(false)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [fullName, setFullName] = useState('')
+  const [companyName, setCompanyName] = useState('')
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }))
-  }
+  
+  const router = useRouter()
+  
+  const supabase = useMemo(() => createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  ), [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    
+    if (!email || !password || !fullName) {
+      setError('Please fill in all required fields')
+      return
+    }
+
+    setLoading(true)
     setError('')
-    setIsLoading(true)
 
     try {
-      if (!formData.fullName.trim()) {
-        throw new Error('Please enter your full name')
-      }
-
-      if (!formData.email.trim()) {
-        throw new Error('Please enter your email address')
-      }
-
-      if (formData.password.length < 6) {
-        throw new Error('Password must be at least 6 characters long')
-      }
-
-      const { data, error } = await supabase.auth.signUp({
-        email: formData.email,
-        password: formData.password,
-        options: {
-          data: {
-            full_name: formData.fullName
-          }
-        }
+      // Sign up the user
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
       })
 
-      if (error) {
-        throw error
+      if (signUpError) {
+        throw signUpError
       }
 
-      if (data.user) {
-        // Insert user profile into users table
-        const { error: profileError } = await supabase
-          .from('users')
-          .insert({
-            id: data.user.id,
-            email: formData.email,
-            full_name: formData.fullName,
-            subscription_tier: 'free',
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          })
+      // Immediately sign in the user
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
 
-        if (profileError) {
-          console.error('Profile creation error:', profileError)
-        }
-
-        // Check if user needs email confirmation
-        if (data.session) {
-          router.push('/dashboard')
-        } else {
-          setError('Please check your email to confirm your account before logging in.')
-        }
+      if (signInError) {
+        throw signInError
       }
+
+      // Insert user profile data
+      const { error: profileError } = await supabase
+        .from('users')
+        .insert({
+          id: signInData.user?.id,
+          email: email,
+          full_name: fullName,
+          company_name: companyName || null,
+          subscription_plan: 'free',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+
+      if (profileError) {
+        console.error('Profile creation error:', profileError)
+        // Don't throw here - user is already signed up and in, just profile creation failed
+      }
+
+      // Redirect to dashboard
+      router.push('/dashboard')
+      
     } catch (err: any) {
+      console.error('Signup error:', err)
       setError(err.message || 'An error occurred during signup')
-    } finally {
-      setIsLoading(false)
+      setLoading(false)
     }
-  }
-
-  const togglePasswordVisibility = () => {
-    setShowPassword(!showPassword)
   }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
-      <div className="max-w-md w-full space-y-8">
-        {/* Header */}
-        <div className="text-center">
-          <div className="flex justify-center items-center mb-6">
-            <div className="p-3 bg-blue-600 rounded-xl">
-              <Bot className="h-8 w-8 text-white" />
+      <div className="w-full max-w-md">
+        <div className="bg-white rounded-2xl shadow-xl p-8">
+          {/* Logo/Header */}
+          <div className="text-center mb-8">
+            <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-xl mx-auto mb-4 flex items-center justify-center">
+              <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+              </svg>
             </div>
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">
+              Join BotCraft Studio
+            </h1>
+            <p className="text-gray-600">
+              Build intelligent chatbots without coding
+            </p>
           </div>
-          <h1 className="text-3xl font-bold text-gray-900">
-            Join BotCraft Studio
-          </h1>
-          <p className="mt-2 text-gray-600">
-            Build intelligent chatbots from your data, no coding required
-          </p>
-        </div>
 
-        {/* Signup Form */}
-        <div className="bg-white p-8 rounded-xl shadow-lg border border-gray-200">
+          {/* Error Message */}
+          {error && (
+            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+              <p className="text-red-600 text-sm">{error}</p>
+            </div>
+          )}
+
+          {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-6">
-            {error && (
-              <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-                <p className="text-sm text-red-600">{error}</p>
-              </div>
-            )}
-
             <div>
               <label htmlFor="fullName" className="block text-sm font-medium text-gray-700 mb-2">
-                Full Name
+                Full Name *
               </label>
               <input
                 id="fullName"
-                name="fullName"
                 type="text"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
                 required
-                value={formData.fullName}
-                onChange={handleInputChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors"
                 placeholder="Enter your full name"
-                disabled={isLoading}
               />
             </div>
 
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-                Email Address
+                Email Address *
               </label>
               <input
                 id="email"
-                name="email"
                 type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 required
-                value={formData.email}
-                onChange={handleInputChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors"
                 placeholder="Enter your email"
-                disabled={isLoading}
+              />
+            </div>
+
+            <div>
+              <label htmlFor="companyName" className="block text-sm font-medium text-gray-700 mb-2">
+                Company Name
+              </label>
+              <input
+                id="companyName"
+                type="text"
+                value={companyName}
+                onChange={(e) => setCompanyName(e.target.value)}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors"
+                placeholder="Enter your company name (optional)"
               />
             </div>
 
             <div>
               <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
-                Password
+                Password *
               </label>
-              <div className="relative">
-                <input
-                  id="password"
-                  name="password"
-                  type={showPassword ? 'text' : 'password'}
-                  required
-                  value={formData.password}
-                  onChange={handleInputChange}
-                  className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Create a password (min. 6 characters)"
-                  disabled={isLoading}
-                  minLength={6}
-                />
-                <button
-                  type="button"
-                  onClick={togglePasswordVisibility}
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center"
-                  disabled={isLoading}
-                >
-                  {showPassword ? (
-                    <EyeOff className="h-5 w-5 text-gray-400" />
-                  ) : (
-                    <Eye className="h-5 w-5 text-gray-400" />
-                  )}
-                </button>
-              </div>
+              <input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                minLength={6}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors"
+                placeholder="Create a password (min. 6 characters)"
+              />
             </div>
 
             <button
               type="submit"
-              disabled={isLoading}
-              className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
+              disabled={loading}
+              className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 text-white py-3 px-4 rounded-lg font-semibold hover:from-blue-600 hover:to-indigo-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center"
             >
-              {isLoading ? (
+              {loading ? (
                 <>
-                  <Loader2 className="animate-spin h-5 w-5 mr-2" />
+                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
                   Creating Account...
                 </>
               ) : (
@@ -203,44 +187,25 @@ export default function SignupPage() {
             </button>
           </form>
 
-          {/* Divider */}
-          <div className="mt-6 pt-6 border-t border-gray-200">
-            <p className="text-center text-sm text-gray-600">
+          {/* Login Link */}
+          <div className="mt-6 text-center">
+            <p className="text-gray-600">
               Already have an account?{' '}
               <Link 
                 href="/login" 
-                className="text-blue-600 hover:text-blue-500 font-medium"
+                className="text-blue-600 hover:text-blue-700 font-medium transition-colors"
               >
                 Sign in
               </Link>
             </p>
           </div>
-        </div>
 
-        {/* Features */}
-        <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">What you'll get:</h3>
-          <ul className="space-y-3">
-            <li className="flex items-start">
-              <div className="w-2 h-2 bg-blue-600 rounded-full mt-2 mr-3 flex-shrink-0"></div>
-              <span className="text-sm text-gray-600">Build intelligent chatbots without coding</span>
-            </li>
-            <li className="flex items-start">
-              <div className="w-2 h-2 bg-blue-600 rounded-full mt-2 mr-3 flex-shrink-0"></div>
-              <span className="text-sm text-gray-600">Upload your data and create knowledge bases</span>
-            </li>
-            <li className="flex items-start">
-              <div className="w-2 h-2 bg-blue-600 rounded-full mt-2 mr-3 flex-shrink-0"></div>
-              <span className="text-sm text-gray-600">Deploy across multiple channels</span>
-            </li>
-            <li className="flex items-start">
-              <div className="w-2 h-2 bg-blue-600 rounded-full mt-2 mr-3 flex-shrink-0"></div>
-              <span className="text-sm text-gray-600">Advanced analytics and conversation flows</span>
-            </li>
-          </ul>
-          <p className="mt-4 text-xs text-gray-500 text-center">
-            Start with our free tier, upgrade to Pro for $49/month
-          </p>
+          {/* Terms */}
+          <div className="mt-6 pt-6 border-t border-gray-200">
+            <p className="text-xs text-gray-500 text-center">
+              By creating an account, you agree to our Terms of Service and Privacy Policy
+            </p>
+          </div>
         </div>
       </div>
     </div>

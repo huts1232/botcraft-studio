@@ -2,327 +2,353 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { createClient } from '@supabase/supabase-js'
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
-import { User, Crown, Trash2, Save, ArrowLeft, Loader2 } from 'lucide-react'
+import { User, Settings, CreditCard, Trash2, Save, Loader2 } from 'lucide-react'
 
 export default function SettingsPage() {
-  const router = useRouter()
   const supabase = useMemo(() => createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!), [])
-  
+
   const [user, setUser] = useState<any>(null)
-  const [userProfile, setUserProfile] = useState<any>(null)
+  const [profile, setProfile] = useState({
+    full_name: '',
+    email: '',
+    company_name: '',
+    subscription_plan: ''
+  })
   const [loading, setLoading] = useState(true)
-  const [updating, setUpdating] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
-  const [formData, setFormData] = useState({
-    full_name: '',
-    email: ''
-  })
 
   useEffect(() => {
-    checkUser()
+    fetchUserData()
   }, [])
 
-  async function checkUser() {
+  const fetchUserData = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser()
+      setLoading(true)
       
-      if (!user) {
-        router.push('/auth/login')
-        return
-      }
-
+      // Get current user
+      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      if (authError) throw authError
+      
       setUser(user)
-
-      // Get user profile from database
-      const { data: profile, error: profileError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', user.id)
-        .single()
-
-      if (profileError && profileError.code !== 'PGRST116') {
-        throw profileError
-      }
-
-      if (profile) {
-        setUserProfile(profile)
-        setFormData({
-          full_name: profile.full_name || '',
-          email: profile.email || user.email || ''
-        })
-      } else {
-        // Create user profile if it doesn't exist
-        const { data: newProfile, error: createError } = await supabase
+      
+      if (user) {
+        // Get user profile
+        const { data: userData, error: userError } = await supabase
           .from('users')
-          .insert([{
-            id: user.id,
-            email: user.email,
-            full_name: user.user_metadata?.full_name || '',
-            subscription_tier: 'free'
-          }])
-          .select()
+          .select('*')
+          .eq('id', user.id)
           .single()
-
-        if (createError) throw createError
         
-        setUserProfile(newProfile)
-        setFormData({
-          full_name: newProfile.full_name || '',
-          email: newProfile.email || ''
+        if (userError) {
+          console.error('User profile error:', userError)
+        }
+        
+        setProfile({
+          full_name: userData?.full_name || '',
+          email: user.email || '',
+          company_name: userData?.company_name || '',
+          subscription_plan: userData?.subscription_plan || 'free'
         })
       }
     } catch (err: any) {
+      console.error('Error fetching user data:', err)
       setError(err.message)
     } finally {
       setLoading(false)
     }
   }
 
-  async function handleUpdateProfile(e: React.FormEvent) {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault()
-    setUpdating(true)
+    setSaving(true)
     setError('')
     setSuccess('')
-
+    
     try {
-      // Update user profile in database
-      const { error: updateError } = await supabase
+      if (!user?.id) return
+      
+      const { error } = await supabase
         .from('users')
-        .update({
-          full_name: formData.full_name,
-          email: formData.email,
+        .upsert({
+          id: user.id,
+          email: profile.email,
+          full_name: profile.full_name,
+          company_name: profile.company_name,
           updated_at: new Date().toISOString()
         })
-        .eq('id', user.id)
-
-      if (updateError) throw updateError
-
-      // Update auth user metadata
-      const { error: authError } = await supabase.auth.updateUser({
-        email: formData.email,
-        data: { full_name: formData.full_name }
-      })
-
-      if (authError) throw authError
-
+      
+      if (error) throw error
       setSuccess('Profile updated successfully!')
       
-      // Refresh user profile
-      await checkUser()
+      // Clear success message after 3 seconds
+      setTimeout(() => setSuccess(''), 3000)
     } catch (err: any) {
+      console.error('Error updating profile:', err)
       setError(err.message)
     } finally {
-      setUpdating(false)
+      setSaving(false)
     }
   }
 
-  async function handleDeleteAccount() {
-    if (!confirm('Are you sure you want to delete your account? This action cannot be undone and will delete all your bots, conversations, and data.')) {
+  const handleDeleteAccount = async () => {
+    if (!confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
       return
     }
-
+    
     setDeleting(true)
     setError('')
-
+    
     try {
-      // Delete all user's bots and related data
-      const { data: userBots } = await supabase
-        .from('bots')
-        .select('id')
-        .eq('user_id', user.id)
-
-      if (userBots && userBots.length > 0) {
-        const botIds = userBots.map(bot => bot.id)
-
-        // Delete in order due to foreign key constraints
-        await supabase.from('messages').delete().in('conversation_id', 
-          await supabase.from('conversations').select('id').in('bot_id', botIds).then(res => res.data?.map(c => c.id) || [])
-        )
-        await supabase.from('conversations').delete().in('bot_id', botIds)
-        await supabase.from('handoff_requests').delete().in('bot_id', botIds)
-        await supabase.from('analytics_events').delete().in('bot_id', botIds)
-        await supabase.from('deployment_channels').delete().in('bot_id', botIds)
-        await supabase.from('conversation_flows').delete().in('bot_id', botIds)
-        await supabase.from('knowledge_bases').delete().in('bot_id', botIds)
-        await supabase.from('bots').delete().in('id', botIds)
-      }
-
-      // Delete user profile
-      await supabase.from('users').delete().eq('id', user.id)
-
-      // Delete auth user
-      const { error: deleteError } = await supabase.auth.admin.deleteUser(user.id)
+      if (!user?.id) return
+      
+      // Delete user data from our database
+      const { error: deleteError } = await supabase
+        .from('users')
+        .delete()
+        .eq('id', user.id)
+      
       if (deleteError) throw deleteError
-
-      // Sign out
+      
+      // Sign out the user
       await supabase.auth.signOut()
-      router.push('/')
+      
+      // Redirect to home page
+      window.location.href = '/'
     } catch (err: any) {
+      console.error('Error deleting account:', err)
       setError(err.message)
       setDeleting(false)
+    }
+  }
+
+  const getPlanName = (plan: string) => {
+    switch (plan) {
+      case 'pro': return 'Pro Plan'
+      case 'enterprise': return 'Enterprise Plan'
+      default: return 'Free Plan'
+    }
+  }
+
+  const getPlanPrice = (plan: string) => {
+    switch (plan) {
+      case 'pro': return '$29/month'
+      case 'enterprise': return 'Custom pricing'
+      default: return '$0/month'
     }
   }
 
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+        <div className="flex items-center gap-3">
+          <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
+          <span className="text-gray-600">Loading settings...</span>
+        </div>
       </div>
     )
   }
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-6">
-            <div className="flex items-center">
-              <Link 
-                href="/dashboard"
-                className="mr-4 p-2 text-gray-400 hover:text-gray-600 transition-colors"
-              >
-                <ArrowLeft className="w-5 h-5" />
-              </Link>
-              <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
-            </div>
-          </div>
+      <div className="max-w-4xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
+            <Settings className="h-8 w-8 text-blue-600" />
+            Settings
+          </h1>
+          <p className="mt-2 text-gray-600">
+            Manage your account settings and preferences
+          </p>
         </div>
-      </div>
 
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {error && (
-          <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md">
-            {error}
+          <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
+            <p className="text-red-800">{error}</p>
           </div>
         )}
 
         {success && (
-          <div className="mb-6 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-md">
-            {success}
+          <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4">
+            <p className="text-green-800">{success}</p>
           </div>
         )}
 
         <div className="space-y-8">
-          {/* User Profile Section */}
-          <div className="bg-white shadow rounded-lg">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <div className="flex items-center">
-                <User className="w-5 h-5 text-gray-400 mr-2" />
-                <h2 className="text-lg font-medium text-gray-900">User Profile</h2>
-              </div>
+          {/* Profile Section */}
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+            <div className="p-6 border-b border-gray-200">
+              <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-3">
+                <User className="h-5 w-5 text-gray-600" />
+                Profile Information
+              </h2>
+              <p className="mt-1 text-gray-600">
+                Update your personal information and contact details
+              </p>
             </div>
-            <div className="px-6 py-6">
-              <form onSubmit={handleUpdateProfile} className="space-y-6">
+            
+            <form onSubmit={handleSaveProfile} className="p-6 space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
-                  <label htmlFor="full_name" className="block text-sm font-medium text-gray-700 mb-1">
+                  <label htmlFor="full_name" className="block text-sm font-medium text-gray-700 mb-2">
                     Full Name
                   </label>
                   <input
                     type="text"
                     id="full_name"
-                    value={formData.full_name}
-                    onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    value={profile.full_name}
+                    onChange={(e) => setProfile({ ...profile, full_name: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="Enter your full name"
                   />
                 </div>
                 
                 <div>
-                  <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
+                  <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
                     Email Address
                   </label>
                   <input
                     type="email"
                     id="email"
-                    value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    value={profile.email}
+                    onChange={(e) => setProfile({ ...profile, email: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50"
                     placeholder="Enter your email"
-                    required
+                    disabled
                   />
+                  <p className="mt-1 text-xs text-gray-500">Email cannot be changed</p>
                 </div>
-
-                <div className="flex justify-end">
-                  <button
-                    type="submit"
-                    disabled={updating}
-                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {updating ? (
-                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                    ) : (
-                      <Save className="w-4 h-4 mr-2" />
-                    )}
-                    {updating ? 'Updating...' : 'Save Changes'}
-                  </button>
-                </div>
-              </form>
-            </div>
+              </div>
+              
+              <div>
+                <label htmlFor="company_name" className="block text-sm font-medium text-gray-700 mb-2">
+                  Company Name
+                </label>
+                <input
+                  type="text"
+                  id="company_name"
+                  value={profile.company_name}
+                  onChange={(e) => setProfile({ ...profile, company_name: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="Enter your company name (optional)"
+                />
+              </div>
+              
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {saving ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4" />
+                  )}
+                  {saving ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
           </div>
 
           {/* Plan Information */}
-          <div className="bg-white shadow rounded-lg">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <div className="flex items-center">
-                <Crown className="w-5 h-5 text-gray-400 mr-2" />
-                <h2 className="text-lg font-medium text-gray-900">Subscription Plan</h2>
-              </div>
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+            <div className="p-6 border-b border-gray-200">
+              <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-3">
+                <CreditCard className="h-5 w-5 text-gray-600" />
+                Subscription Plan
+              </h2>
+              <p className="mt-1 text-gray-600">
+                View and manage your subscription plan
+              </p>
             </div>
-            <div className="px-6 py-6">
-              <div className="flex items-center justify-between">
+            
+            <div className="p-6">
+              <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
                 <div>
                   <h3 className="text-lg font-medium text-gray-900">
-                    {userProfile?.subscription_tier === 'pro' ? 'Pro Plan' : 'Free Plan'}
+                    {getPlanName(profile.subscription_plan)}
                   </h3>
-                  <p className="text-sm text-gray-500">
-                    {userProfile?.subscription_tier === 'pro' 
-                      ? '$49/month - Unlimited bots, advanced features, priority support'
-                      : 'Limited features - Upgrade for unlimited access'
-                    }
-                  </p>
+                  <p className="text-gray-600">{getPlanPrice(profile.subscription_plan)}</p>
                 </div>
-                {userProfile?.subscription_tier !== 'pro' && (
-                  <button
-                    onClick={() => router.push('/dashboard')}
-                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                  >
-                    Upgrade to Pro
-                  </button>
-                )}
+                
+                <div className="flex gap-3">
+                  {profile.subscription_plan === 'free' && (
+                    <button
+                      onClick={() => window.location.href = '/pricing'}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                      Upgrade Plan
+                    </button>
+                  )}
+                  {profile.subscription_plan !== 'free' && (
+                    <button
+                      onClick={() => window.location.href = '/billing'}
+                      className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                      Manage Billing
+                    </button>
+                  )}
+                </div>
+              </div>
+              
+              <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="text-center p-4 bg-gray-50 rounded-lg">
+                  <div className="text-2xl font-bold text-gray-900">
+                    {profile.subscription_plan === 'free' ? '1' : profile.subscription_plan === 'pro' ? '10' : 'Unlimited'}
+                  </div>
+                  <div className="text-sm text-gray-600">Chatbots</div>
+                </div>
+                
+                <div className="text-center p-4 bg-gray-50 rounded-lg">
+                  <div className="text-2xl font-bold text-gray-900">
+                    {profile.subscription_plan === 'free' ? '100' : profile.subscription_plan === 'pro' ? '10,000' : 'Unlimited'}
+                  </div>
+                  <div className="text-sm text-gray-600">Messages/month</div>
+                </div>
+                
+                <div className="text-center p-4 bg-gray-50 rounded-lg">
+                  <div className="text-2xl font-bold text-gray-900">
+                    {profile.subscription_plan === 'free' ? '1' : profile.subscription_plan === 'pro' ? '5' : 'Unlimited'}
+                  </div>
+                  <div className="text-sm text-gray-600">Integrations</div>
+                </div>
               </div>
             </div>
           </div>
 
           {/* Danger Zone */}
-          <div className="bg-white shadow rounded-lg border border-red-200">
-            <div className="px-6 py-4 border-b border-red-200 bg-red-50">
-              <div className="flex items-center">
-                <Trash2 className="w-5 h-5 text-red-600 mr-2" />
-                <h2 className="text-lg font-medium text-red-900">Danger Zone</h2>
-              </div>
+          <div className="bg-white rounded-lg shadow-sm border border-red-200">
+            <div className="p-6 border-b border-red-200">
+              <h2 className="text-xl font-semibold text-red-900 flex items-center gap-3">
+                <Trash2 className="h-5 w-5 text-red-600" />
+                Danger Zone
+              </h2>
+              <p className="mt-1 text-red-600">
+                Irreversible and destructive actions
+              </p>
             </div>
-            <div className="px-6 py-6">
-              <div className="flex items-center justify-between">
+            
+            <div className="p-6">
+              <div className="flex items-center justify-between p-4 border border-red-200 rounded-lg">
                 <div>
-                  <h3 className="text-lg font-medium text-gray-900">Delete Account</h3>
-                  <p className="text-sm text-gray-500">
+                  <h3 className="text-lg font-medium text-red-900">Delete Account</h3>
+                  <p className="text-red-600">
                     Permanently delete your account and all associated data. This action cannot be undone.
                   </p>
                 </div>
+                
                 <button
                   onClick={handleDeleteAccount}
                   disabled={deleting}
-                  className="inline-flex items-center px-4 py-2 border border-red-300 text-sm font-medium rounded-md text-red-700 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {deleting ? (
-                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
-                    <Trash2 className="w-4 h-4 mr-2" />
+                    <Trash2 className="h-4 w-4" />
                   )}
                   {deleting ? 'Deleting...' : 'Delete Account'}
                 </button>

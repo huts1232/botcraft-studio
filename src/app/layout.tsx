@@ -2,8 +2,8 @@ import type { Metadata } from "next"
 import "./globals.css"
 
 export const metadata: Metadata = {
-  title: "BotCraft Studio — Build intelligent chatbots from your data, no coding required",
-  description: "A drag-and-drop platform that transforms business documents into smart conversational AI. Upload your knowledge base, design conversation flows visual",
+  title: "BotCraft Studio — Build intelligent chatbots without coding",
+  description: "BotCraft Studio enables businesses to create, customize, and deploy AI-powered chatbots for customer support, lead generation, and sales automation. U",
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
